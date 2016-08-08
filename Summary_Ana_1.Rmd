@@ -54,44 +54,73 @@ communities <- subset(county, select = c("city",
 colnames(communities)[1] <- "commun"
 ```
 
-1. 50mm rain, 500km dist, 3-day window
-```{r}
+### Create data sets based on rain_exposure
+```{r eval=FALSE}
+# 50mm rain, 500km dist, 3-day window
 rain_exposure(locations = communities,
               start_year = 1988, end_year = 2005,
               rain_limit = 50, dist_limit = 500,
               #days_included = c(-1, 0, 1),
               out_type = "rds",
               out_dir = "exposure/rain50")
-```
 
-2. 75mm rain, 500km dist, 3-day window
-```{r}
+# 75mm rain, 500km dist, 3-day window
 rain_exposure(locations = communities,
               start_year = 1988, end_year = 2005,
               rain_limit = 75, dist_limit = 500,
               #days_included = c(-1, 0, 1),
               out_type = "rds",
               out_dir = "exposure/rain75")
-```
 
-3. 100mm rain, 500km dist, 3-day window
-```{r}
+# 100mm rain, 500km dist, 3-day window
 rain_exposure(locations = communities,
               start_year = 1988, end_year = 2005,
               rain_limit = 100, dist_limit = 500,
               #days_included = c(-1, 0, 1),
               out_type = "rds",
               out_dir = "exposure/rain100")
-```
 
-4. 125mm rain, 500km dist, 3-day window
-```{r}
+# 125mm rain, 500km dist, 3-day window
 rain_exposure(locations = communities,
               start_year = 1988, end_year = 2005,
               rain_limit = 125, dist_limit = 500,
               #days_included = c(-1, 0, 1),
               out_type = "rds",
               out_dir = "exposure/rain125")
+```
+
+### Create data sets based on wind_exposure
+```{r eval=FALSE}
+# wind_limit = 12m/sec
+wind_exposure(locations = communities,
+              start_year = 1988, end_year = 2005, wind_limit = 12,
+              out_type = "rds", out_dir = "exposure/wind12")
+
+# wind_limit = 15m/sec
+wind_exposure(locations = communities,
+              start_year = 1988, end_year = 2005, wind_limit = 15,
+              out_type = "rds", out_dir = "exposure/wind15")
+
+# wind_limit = 18m/sec
+wind_exposure(locations = communities,
+              start_year = 1988, end_year = 2005, wind_limit = 18,
+              out_type = "rds", out_dir = "exposure/wind18")
+```
+
+### Create data sets based on distance_exposure
+```{r eval=FALSE}
+# dist_limit = 50km
+distance_exposure(locations = communities,
+                  start_year = 1988, end_year = 2005, dist_limit = 50,
+                  out_type = "rds", out_dir = "exposure/dist50")
+# dist_limt = 75km
+distance_exposure(locations = communities,
+                  start_year = 1988, end_year = 2005, dist_limit = 75,
+                  out_type = "rds", out_dir = "exposure/dist75")
+# dist_limit = 100km
+distance_exposure(locations = communities,
+                  start_year = 1988, end_year = 2005, dist_limit = 100,
+                  out_type = "rds", out_dir = "exposure/dist100")
 ```
 
 # Combine and summarise
@@ -141,58 +170,47 @@ kable(ta)
 
 ## Plots
 ```{r}
-to_plot <- function(df = c(), title = c()){
-  # add city fullname
-  sub.county <- readRDS("data/sub.county.rds")
-  city.abbr <- df$loc
-  for(city in city.abbr){
-    df$cityname[df$loc == city] <-
+# get data sets
+plot_rain <- readRDS("data/df50.rds")
+
+# add city fullname
+sub.county <- readRDS("data/sub.county.rds")
+city.abbr <- plot_rain$loc
+for(city in city.abbr){
+    plot_rain$cityname[plot_rain$loc == city] <-
       paste(sub.county$citynameU[sub.county$city == city],
             sub.county$state[sub.county$city == city],
             sep = ", ")
   }
-  
-  # data
-  to_plot <- df %>%
-    dplyr::group_by(loc) %>%
+
+# group by maximum of max_rain 
+plot_rain <- dplyr::group_by(plot_rain, loc) %>%
     dplyr::mutate(loc_max_rain = max(max_rain)) %>%
     ungroup() %>%
     arrange(loc_max_rain) %>%
     mutate(cityname = factor(cityname, levels = unique(cityname)))
-  
-  # plot
-  plotname <- paste0(title, ".", "png", seq = "")
-  gplot <- ggplot(to_plot, aes(max_rain, cityname, 
-                               group = cityname)) +
-  geom_point(aes(color = cityname, alpha = 0.5)) +
-  geom_line(aes(color = cityname)) + 
-  ylab("") +
-  xlab("Cumulative rain (mm)") +
-  scale_x_continuous(limits = c(75, 300)) +
-  theme_few() + 
-  theme(#axis.text.y = element_text(angle = 40),
-        legend.position = "none") +
-  ggsave(plotname, width = 5, height = 10)
 
-  return(list("to_plot" = to_plot, "gplot" = gplot))
-}
+# categorize max_rain for plotting
+plot_rain$rain_cate <- cut(plot_rain$max_rain, 
+                           breaks = c(50, 75, 100, 125, Inf),
+                           labels = c(1:4))  
+# plot
+ggplot(plot_rain, aes(max_rain, cityname, group = cityname)) +
+         geom_vline(xintercept = c(50, 75, 100, 125), colour = "grey", linetype = "longdash") +
+         geom_line(aes(y = cityname), colour = "grey45") +
+         geom_point(aes(color = rain_cate), alpha = 0.8, size = 1.8) +
+         ylab("") +
+         xlab("Cumulative rain (mm)") +
+         scale_x_continuous(breaks = c(50, 75, 100, 125, 200, 300),
+                            limits = c(45, 300)) +
+         theme_few() + 
+         theme(legend.position = "none") +
+         ggsave("Plots/rain_expo.png", width = 11, height = 15)
 ```
 
 [BA: You need to increase you x-limit, because you're chopping off the worst storms in New Orleans and Lake Charles. I've increased it to 300 mm in the plot.]
 
 [BA: We don't need to use color here to show the order of intensity, because we're already showing that with the position. Instead, we could consider using color to show something like region or population. We can think about what might be most meaningful.]
-
-```{r fig.width=6, fig.height=10, message=FALSE}
-to_plot(df75, "75mm")$gplot
-```
-
-```{r fig.width=6, fig.height=8, message=FALSE}
-to_plot(df125, "125mm")$gplot
-```
-
-```{r fig.width=6, fig.height=7, message=FALSE}
-to_plot(df175, "175mm")$gplot
-```
 
 ## Map
 Prepare data set for mapping
