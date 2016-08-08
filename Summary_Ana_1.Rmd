@@ -1,0 +1,305 @@
+---
+title: "Summary_Analysis_1"
+author: "Meilin Yan"
+date: "June 9, 2016"
+output: pdf_document
+---
+## Load packages
+```{r message=FALSE, warning=FALSE}
+library(hurricaneexposure)
+library(hurricaneexposuredata)
+library(XML)
+library(dplyr)
+library(ggplot2)
+library(knitr)
+library(choroplethr)
+library(tools)
+library(ggthemes)
+```
+
+Run this code if you don't already have `hurricaneexposuredata` installed (also, you'll want to reinstall the newest version of `hurricaneexposure`):
+
+```{r eval = FALSE}
+install_github("geanders/hurricaneexposuredata")
+install_github("geanders/hurricaneexposure")
+```
+
+## Data preparation
+### Get county data of NMMAPS
+```{r}
+url <- "http://www.ihapss.jhsph.edu/data/NMMAPS/documentation/counties.htm"
+county <- readHTMLTable(url, header = T, stringsAsFactors = F)
+county <- county[[2]]
+
+# Change fips for Miami
+county$fips[county$fips == "12025"] <- "12086"
+
+# Add 0 to these 4-digit fips
+county$fips <- sprintf("%05s", county$fips)
+
+# Save county
+saveRDS(county, file = "data/county.rds")
+
+# Save unique city&cityname
+sub.county <- select(county, city, citynameU, state) %>%
+                 distinct()
+saveRDS(sub.county, file = "data/sub.county.rds")
+```
+
+### Combine with storm data
+```{r}
+county <- readRDS("data/county.rds")
+communities <- subset(county, select = c("city", 
+                                         "cityname", "fips"))
+colnames(communities)[1] <- "commun"
+```
+
+1. 50mm rain, 500km dist, 3-day window
+```{r}
+rain_exposure(locations = communities,
+              start_year = 1988, end_year = 2005,
+              rain_limit = 50, dist_limit = 500,
+              #days_included = c(-1, 0, 1),
+              out_type = "rds",
+              out_dir = "exposure/rain50")
+```
+
+2. 75mm rain, 500km dist, 3-day window
+```{r}
+rain_exposure(locations = communities,
+              start_year = 1988, end_year = 2005,
+              rain_limit = 75, dist_limit = 500,
+              #days_included = c(-1, 0, 1),
+              out_type = "rds",
+              out_dir = "exposure/rain75")
+```
+
+3. 100mm rain, 500km dist, 3-day window
+```{r}
+rain_exposure(locations = communities,
+              start_year = 1988, end_year = 2005,
+              rain_limit = 100, dist_limit = 500,
+              #days_included = c(-1, 0, 1),
+              out_type = "rds",
+              out_dir = "exposure/rain100")
+```
+
+4. 125mm rain, 500km dist, 3-day window
+```{r}
+rain_exposure(locations = communities,
+              start_year = 1988, end_year = 2005,
+              rain_limit = 125, dist_limit = 500,
+              #days_included = c(-1, 0, 1),
+              out_type = "rds",
+              out_dir = "exposure/rain125")
+```
+
+# Combine and summarise
+## Combine function
+rain_exposure function yields data sets by city, I am going to combine these data sets into one with comb.city function. 
+```{r}
+comb.city <- function(rain_limit = c()){
+  root <- paste("exposure/rain", rain_limit, sep = "")
+  city.name <- list.files(root, full.names = TRUE)
+  df.total <- data.frame()
+  for(name in city.name){
+    do <- readRDS(name)
+    df <- as.data.frame(do)
+    df.total <- rbind(df.total, df)}
+    return(df.total)
+  }
+```
+
+## Count No. of cities and storms
+```{r}
+count <- function(df = c()){
+  cities <- unique(df$loc)
+  No.c <- length(cities)
+  storms <- unique(df$storm_id)
+  No.s <- length(storms)
+  return(c(No.c, No.s))
+}
+
+df50 <- comb.city(50)
+df75 <- comb.city(75)
+df100 <- comb.city(100)
+df125 <- comb.city(125)
+
+# Save for Model_Ana_1
+saveRDS(df50, file = "data/df50.rds")
+saveRDS(df75, file = "data/df75.rds")
+saveRDS(df100, file = "data/df100.rds")
+saveRDS(df125, file = "data/df125.rds")
+
+# Statistics summary
+No.of.cities <- c(count(df50)[1], count(df75)[1], count(df100)[1], count(df125)[1])
+No.of.storms <- c(count(df50)[2], count(df75)[2], count(df100)[2], count(df125)[2])
+ta <- cbind(No.of.cities, No.of.storms)
+rownames(ta) <- c("50mm", "75mm", "100mm", "125mm")
+kable(ta)
+```
+
+## Plots
+```{r}
+to_plot <- function(df = c(), title = c()){
+  # add city fullname
+  sub.county <- readRDS("data/sub.county.rds")
+  city.abbr <- df$loc
+  for(city in city.abbr){
+    df$cityname[df$loc == city] <-
+      paste(sub.county$citynameU[sub.county$city == city],
+            sub.county$state[sub.county$city == city],
+            sep = ", ")
+  }
+  
+  # data
+  to_plot <- df %>%
+    dplyr::group_by(loc) %>%
+    dplyr::mutate(loc_max_rain = max(max_rain)) %>%
+    ungroup() %>%
+    arrange(loc_max_rain) %>%
+    mutate(cityname = factor(cityname, levels = unique(cityname)))
+  
+  # plot
+  plotname <- paste0(title, ".", "png", seq = "")
+  gplot <- ggplot(to_plot, aes(max_rain, cityname, 
+                               group = cityname)) +
+  geom_point(aes(color = cityname, alpha = 0.5)) +
+  geom_line(aes(color = cityname)) + 
+  ylab("") +
+  xlab("Cumulative rain (mm)") +
+  scale_x_continuous(limits = c(75, 300)) +
+  theme_few() + 
+  theme(#axis.text.y = element_text(angle = 40),
+        legend.position = "none") +
+  ggsave(plotname, width = 5, height = 10)
+
+  return(list("to_plot" = to_plot, "gplot" = gplot))
+}
+```
+
+[BA: You need to increase you x-limit, because you're chopping off the worst storms in New Orleans and Lake Charles. I've increased it to 300 mm in the plot.]
+
+[BA: We don't need to use color here to show the order of intensity, because we're already showing that with the position. Instead, we could consider using color to show something like region or population. We can think about what might be most meaningful.]
+
+```{r fig.width=6, fig.height=10, message=FALSE}
+to_plot(df75, "75mm")$gplot
+```
+
+```{r fig.width=6, fig.height=8, message=FALSE}
+to_plot(df125, "125mm")$gplot
+```
+
+```{r fig.width=6, fig.height=7, message=FALSE}
+to_plot(df175, "175mm")$gplot
+```
+
+## Map
+Prepare data set for mapping
+```{r warning=FALSE, message=FALSE}
+data("df_pop_county")
+df_county <- df_pop_county 
+#  mutate(value = 0)
+
+# Add 0 to regions with 4-digit fips
+df_county$region <- sprintf("%05s", df_county$region)
+```
+
+Get all the counties in the NMMAPS with storm based on 75 rain, 500 dist
+```{r}
+fips <- unique(county$fips)
+rain_exposure(locations = fips,
+              start_year = 1988, end_year = 2005,
+              rain_limit = 75, dist_limit = 500,
+              #days_included = c(-1, 0, 1),
+              out_type = "rds",
+              out_dir = "data/county_w_storm_rain75")
+co <- list.files("data/county_w_storm_rain75")
+county_w_storm <- file_path_sans_ext(co)
+# 68 counties
+```
+
+Set value for counties in NMMAPS
+```{r}
+# value=1 for county in NMMAPSE, value=2 for county in NMMAPS with storm
+get.city.county <- mutate(county, value = ifelse(fips %in% county_w_storm, 2, 1)) %>% 
+                   select(city, fips, value)
+
+# For multiple counties belong to one city, they were all exposed to storm if one of them had storm.
+get.city.county$value[get.city.county$city == "dlft"] <- 2
+get.city.county$value[get.city.county$city == "kan"] <- 2
+colnames(get.city.county) <- c("city", "region", "value")
+```
+
+Combine 
+```{r}
+df_county <- left_join(df_county, get.city.county, by = c("region")) %>%
+             select(region, value.y)
+colnames(df_county) <- c("region", "value")
+df_county$value[is.na(df_county$value)] <- 0
+df_county$value <- as.factor(df_county$value)
+df_county$region <- as.numeric(df_county$region)
+```
+
+### Map county
+
+The map correctly shows all the counties in NMMAPS with/without storm. However, I still couldn't figure out how to add a circle to all the NMMAPS couties. The choropleth map seems different from a common map even though I can get the reference map for a choropleth. I am trying to figure it out. 
+
+```{r}
+eastern_states <- c("alabama", "arkansas", "connecticut",
+                    "delaware", "district of columbia", "florida",
+                    "georgia", "illinois", "indiana", "iowa", 
+                    "kansas", "kentucky", "louisiana", "maine",
+                    "maryland", "massachusetts", "michigan",
+                    "mississippi", "missouri", "new hampshire", 
+                    "new jersey", "new york", "north carolina", 
+                    "ohio", "oklahoma", "pennsylvania", "rhode island",
+                    "south carolina", "tennessee", "texas", "vermont",
+                    "virginia", "west virginia", "wisconsin")
+
+choro <- CountyChoropleth$new(df_county)
+choro$title <- "County in NMMAPS"
+choro$set_zoom(eastern_states)
+
+choro$ggplot_scale <- scale_fill_manual(name = "County status",
+                                    values = c("white",
+                                               "orange",
+                                               "red"),
+                                    labels = c("Not in NMMAPS",
+                                               "In NMMAPS without Storm",
+                                               "In NMMAPS with Storm"))
+
+
+choro$render()
+```
+
+[BA: The plot you get back from `choro$render()` is a ggplot object. You should be able to add on points based on latitude and longitude (this is how we're adding the hurricane tracks in our storm mapping). Here's a start for you. You'll want to remove all of the original NMMAPS locations that are not in the eastern states we're considering. If it's not too hard, you could also do the circles in orange or red for in / not in the storm]
+
+```{r}
+city.char <- readRDS("data/city.char.rds")
+
+# remove locations not in the eastern states
+city.char$statename <- tolower(city.char$statename)
+latlong <- subset(city.char, city.char$statename %in% eastern_states)
+latlong$lat <- as.numeric(latlong$lat)
+latlong$long <- -1 * as.numeric(latlong$long)
+
+a <- choro$render()
+a + geom_point(data = latlong, aes(x = long, y = lat, group = NULL),
+               shape = 1) 
+   # scale_shape_discrete(solid = TRUE)
+ggsave("map/county_in_NMMAPS.pdf")
+```
+
+
+### Check out the map
+
+* St. Louis city (fips = 29510) in Missouri has no storm during our study period. 
+
+* Storms hit the southeast part of TX state. Three counties don't have storms in the map.
+    + El Paso county (48141, west corner of TX) is a low risk area. 
+    + Travis county (48453) is a high risk hurricane zone. Travis county is not exposed to storm based on the selected values for rain and distance, and would be considered as storm county if we change the exposure condition.
+    + Lubbock county (48303) is a low risk hurricane zone with only one hurricane recorded since 1930.
+    + Our package seems not cover one big storm, "Lidia-1993" which hit Travis county and most part of TX. [BA: Hurricane Lidia in 1993 was a storm from the Pacific Ocean, rather than the Atlantic Ocean. We're restricting our analysis to the Atlantic basin storms, so that's why we don't have Lidia in our dataset.]
+
+* Jefferson (21111) and Fayette (21067) are the two counties in Kentucky. Only Jefferson was exposed to storms in the map. The two counties might be at similar risk for hurricane. 

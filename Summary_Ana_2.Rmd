@@ -1,0 +1,31 @@
+---
+title: "Summary_Ana_2"
+author: "Meilin Yan"
+date: "August 7, 2016"
+output: pdf_document
+---
+## Load packages
+```{r message=FALSE, warning=FALSE}
+library(hurricaneexposure)
+library(hurricaneexposuredata)
+library(XML)
+library(dplyr)
+```
+
+## Community-specific characteristics data preparation
+```{r}
+# population
+url1 <- "http://www.ihapss.jhsph.edu/data/NMMAPS/documentation/cities.htm"
+pop <- readHTMLTable(url1, header = T, stringsAsFactors = F)
+pop <- pop[[2]]
+
+# latitude
+url2 <- "http://www.ihapss.jhsph.edu/data/NMMAPS/documentation/latlong.htm"
+lat <- readHTMLTable(url2, header = T, stringsAsFactors = F)
+lat <- lat[[2]]
+
+# merge two data sets
+city.char <- left_join(pop, lat, by = "city") %>%
+             select(city, state, citynameU, pop, lat, long)
+saveRDS(city.char, file = "data/city.char.rds")
+```

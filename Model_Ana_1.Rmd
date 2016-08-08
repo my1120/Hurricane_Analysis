@@ -1,0 +1,347 @@
+---
+title: '20160607'
+author: "Meilin Yan"
+date: "June 7, 2016"
+output: pdf_document
+---
+
+## LOAD PACKAGES
+```{r message=FALSE, warning=FALSE}
+library(lubridate)
+library(dplyr)
+library(dlnm)
+library(splines)
+library(mvmeta)
+```
+
+## DATA PREP
+### Read health data
+```{r}
+readCity <- function(city = c(), collapseAge = TRUE){
+  root <- "~/tmp/NMMAPS/"
+  file <- paste(root, city, ".rds", sep = "")
+  df <- readRDS(file)
+
+  if(collapseAge == TRUE){
+    df <- rowsum(df[,c("alldeath", "death", "accident", "cvd", "resp",
+                       "copd", "suicide", "tmpd", "dptp")], df$date,
+                 reorder = FALSE)
+    df$date <- as.Date(rownames(df))
+    df[ , c("tmpd", "dptp")] <- df[ , c("tmpd", "dptp")]/3
+    df$dow <- as.factor(as.POSIXlt(df$date)$wday)
+  }
+  
+  return(df)
+}
+# example
+# miam <- readCity(city = "miam", collapseAge = TRUE)
+```
+
+### Read storm data
+```{r}
+# `rain` can take the values "rain125", "rain100", "rain75", and "rain50"
+readStorm <- function(rain = c(), city = c()){
+  root <- "exposure/"
+  file <- paste(root, rain, "/", city, ".rds", sep = "")
+  df <- readRDS(file)
+  df <- as.data.frame(df)
+  df$date <- lubridate::ymd(df$closest_date)
+  
+  return(df)
+}
+# example
+# miam_75 <- readStorm(rain = "rain75", city = "miam")
+```
+
+### Combine health data and storm data
+```{r}
+city.storm <- function(rain = c(), city = c()){
+  # Get health data
+  h.df <- readCity(city)
+  # Get storm data
+  s.df <- readStorm(rain, city)
+  
+  storm_days <- s.df$date
+  
+  df <- left_join(h.df, s.df, by = "date") %>%
+        mutate(hurr = ifelse(date %in% storm_days, 1, 0))
+  df$hurr <- as.factor(df$hurr)
+  
+  # Add abbreviate and full cityname
+  df$city <- city
+  sub.county <- readRDS("data/sub.county.rds")
+     
+  cityname <- sub.county$citynameU[sub.county$city == city]
+  df$cityname <- cityname
+  
+  df$time <- scale(as.numeric(df$date), center = TRUE, scale = FALSE)
+  df$dptp <- residuals(lm(df$dptp ~ df$tmpd, na.action = na.exclude))
+  n.years <- length(unique(as.POSIXlt(df$date)$year))
+  
+  # Total death
+  df$all <- df$accident + df$death
+  
+  # Create strata
+  df$year <- as.factor(format(df$date, format = "%Y"))
+  df$month <- as.factor(months(df$date))
+  df$strata <- as.factor(df$year:df$month)
+  return(df)
+}
+# example
+# miam_df75 <- city.storm(rain = "rain75", city = "miam")
+```
+
+## Intercept only meta-regression
+### First-stage: Single lag distribution of linear hurricant exposure
+
+```{r}
+model_city <- function(rain = "rain75", city, cause = "all"){
+  df <- city.storm(rain, city)
+  cb <- crossbasis(df$hurr, lag = c(0, 13), 
+                     argvar = list(fun = "lin"),
+                     arglag = list(fun = "ns", knots = c(1, 4, 8)))
+  mod_results <- glm(df[ , cause] ~ cb + ns(time, 7 * 19) + factor(dow), 
+             family = quasipoisson(link = log),
+             data = df,
+             control = glm.control(epsilon = 10E-8, maxit = 5000))
+  city_pred <- crosspred(basis = cb, model = mod_results, cen = 0)
+  city_mod <- list(mod_results = mod_results, city_pred = city_pred)
+  return(city_mod)
+}
+# example
+# miam_mod <- model_city(rain = "rain75", city = "miam", cause = "all")
+# coef(miam_mod[["city_pred"]])
+# vcov(miam_mod[["city_pred"]])
+```
+
+```{r}
+plot_city_mod <- function(city_mod, city_name){
+  plot(city_mod[["city_pred"]], xlab = "Lag",
+       ylab = "RR compared to non-storm day",
+       main = city_name, exp = TRUE, ptype = "slices", var = 1)
+}
+# example
+# miam_mod <- model_city(rain = "rain75", city = "miam", cause = "all")
+# plot_city_mod(miam_mod, city_name = "Miami, FL")
+```
+
+
+```{r echo = FALSE, fig.width = 12, fig.height = 10}
+this_plot <- function(city, city_name, cause = "all"){
+  city_mod <- model_city(rain = "rain75", city = city, cause = cause)
+  plot_city_mod(city_mod, city_name)
+}
+
+oldpar <- par(mfrow = c(2, 3))
+this_plot("miam", "Miami, FL")
+this_plot("jckv", "Jacksonville, FL")
+this_plot("no", "New Orleans, LA")
+this_plot("mobi", "Mobile, AL")
+this_plot("lkch", "Lake Charles, LA")
+this_plot("new", "Newport News, VA")
+par(oldpar)
+```
+
+```{r echo = FALSE, fig.width = 12, fig.height = 10}
+oldpar <- par(mfrow = c(2, 3))
+this_plot("miam", "Miami, FL", cause = "accident")
+this_plot("jckv", "Jacksonville, FL", cause = "accident")
+this_plot("no", "New Orleans, LA", cause = "accident")
+this_plot("mobi", "Mobile, AL", cause = "accident")
+this_plot("lkch", "Lake Charles, LA", cause = "accident")
+this_plot("new", "Newport News, VA", cause = "accident")
+par(oldpar)
+```
+
+```{r}
+read_and_fit <- function(rain = "rain75", city, cause = "all"){
+  print(city)
+  city_mod <- model_city(rain, city = city, cause = cause)
+  return(city_mod)
+}
+
+pull_city_coef <- function(city_mod){
+  city_coef <- coef(city_mod[["city_pred"]])
+  return(city_coef)
+}
+
+pull_city_vcov <- function(city_mod){
+  city_vcov <- vcov(city_mod[["city_pred"]])
+  return(city_vcov)
+}
+
+meta_cities <- function(city_list = c("miam", "no", "jckv", "mobi", 
+                                      "lkch", "new"), 
+                        rain = "rain75", cause = "all"){
+  city_models <- lapply(city_list, read_and_fit, rain = rain, cause = cause)
+  
+  city_coefs <- lapply(city_models, pull_city_coef)
+  city_coefs <- do.call("rbind", city_coefs)
+  
+  city_vcovs <- lapply(city_models, pull_city_vcov)
+  
+  meta_model <- mvmeta::mvmeta(city_coefs ~ 1, S = city_vcovs, method = "reml")
+  return(meta_model)
+}
+
+# example
+# ex_meta <- meta_cities()
+
+pred_meta <- function(meta_model){
+  hurr_basis <- dlnm::crossbasis(x = c(rep(0, 20), 1, rep(0, 20)), 
+                                 lag = c(0, 13),
+                                 argvar = list(fun = "lin"),
+                                 arglag = list(fun = "ns", knots = c(1, 4, 8)))
+  meta_pred <- crosspred(hurr_basis, coef = coef(meta_model),
+                         vcov = vcov(meta_model), model.link = "log",
+                         cen = 0, at = 1)
+  return(meta_pred)
+}
+
+# example
+# ex_meta <- meta_cities()
+# ex_pred <- pred_meta(ex_meta)
+
+plot_meta <- function(meta_pred){
+  plot(meta_pred, xlab = "Lag", 
+       ylab = "RR compared to non-storm day",
+       exp = TRUE, ptype = "slices", var = 1)
+}
+
+# example
+# ex_meta <- meta_cities()
+# ex_pred <- pred_meta(ex_meta)
+# plot_meta(ex_pred)
+
+# another example
+# ex_meta <- meta_cities(cause = "accident")
+# ex_pred <- pred_meta(ex_meta)
+# plot_meta(ex_pred)
+```
+
+```{r}
+this_plot <- function(city_list, rain = "rain75", cause = "all"){
+  meta_model <- meta_cities(city_list = city_list)
+  meta_pred <- pred_meta(meta_model = meta_model)
+  plot_meta(meta_pred = meta_pred)
+}
+
+rain_75_cities <- gsub(".rds", "", list.files("exposure/rain75"))
+this_plot(city_list = rain_75_cities, rain = "rain75", cause = "all")
+
+rain_75_cities <- gsub(".rds", "", list.files("exposure/rain75"))
+this_plot(city_list = rain_75_cities, rain = "rain75", cause = "accident")
+
+gulf_coast_cities <- c("stpe", "tamp",
+                       "mobi", "no", "batr", "lafy", "lkch",
+                       "hous", "corp")
+this_plot(city_list = gulf_coast_cities, rain = "rain75", cause = "all")
+
+atlantic_coast_cities <- c("miam", "jckv", "orla", "nor", "new",
+                           "nwk", "jers", "ny")
+this_plot(city_list = atlantic_coast_cities, rain = "rain75", cause = "all")
+
+```
+
+
+### Seocond-stage: Meta-regression by using "reml" method
+
+The following function "Rain.glm.meta" will run the first-stage (location-specific regression) and the second-stage (meta-regression), and return the meta-regression model.
+
+```{r}
+Rain.glm.meta <- function(rain = c(), cause = c()){
+  # Read the combination dataset 
+  root <- "data/cities."
+  file <- paste(root, rain, ".rds", sep = "")
+  df <- readRDS(file)
+  
+  # Create a list with the location series
+  locations <- unique(df$city) 
+  data <- lapply(locations, function(x) df[df$city == x, ])
+  names(data) <- locations
+  
+  # Create matrix/list to store the cumulative coefs/vcov
+  y <- matrix(NA, length(data), 1, # one coefficient for city-specific analysis
+                  dimnames=list(locations, paste("b", seq(1), sep="")))
+  S <- vector("list", length(data))
+  names(S) <- locations
+
+  # Run first-stage model and store results
+for(i in seq(data)){
+  sub.data <- data[[i]]
+  
+  suppressWarnings(
+    cb <- crossbasis(sub.data$hurr, lag = c(0, 10), 
+                     argvar = list("lin", cen = 0),
+                     arglag = list("integer"))
+  )
+  fit <- glm(sub.data[, cause] ~ cb + ns(dptp, 3) + ns(tmpd, 3) + strata , 
+             family = quasipoisson(link = log),
+             data = sub.data,
+             control = glm.control(epsilon = 10E-8, maxit = 10000))
+  
+  cr <- crossreduce(cb, fit)
+  
+  # Store the overall cumulative coefficients and (co)variance
+  y[i, ] <- cr$coefficients
+  S[[i]] <- cr$vcov
+}
+  # Run second-stage model (univariate meta-regression)
+  meta.fit <- mvmeta(y~1, S, method = "reml")
+  return(meta.fit)
+  
+  # Add meta variable: latitude, population
+#  city.char <- readRDS("data/city.char.rds")
+#  pop <- city.char$pop[city.char$city %in% locations]
+#  lat <- city.char$lat[city.char$city %in% locations]
+  
+  # Multivariate meta-regression
+#  meta.pop <- update(meta.fit, . ~ pop)
+#  meta.lat <- update(meta.fit, . ~ lat)
+#  return(list("meta.fit" = meta.fit, "meta.pop" = meta.pop, "meta.lat" = meta.lat))
+}
+```
+
+Extract point estimates and 95%CI from meta-regression
+```{r}
+Rain.ests <- as.data.frame(matrix(NA, 3, 7))
+colnames(Rain.ests) <- c("rain", paste0("all", ".", c("point", "low", "high"), sep = ""),
+                                 paste0("acci", ".", c("point", "low", "high"), sep = ""))
+t.rain <- c("rain75", "rain125", "rain175")
+rownames(Rain.ests) <- t.rain
+Rain.ests$rain <- as.factor(c("1-rain75", "2-rain125", "3-rain175"))
+
+for(rain in t.rain){
+  # All death
+  meta.all <- summary(Rain.glm.meta(rain, "all"))
+  coef.all <- meta.all[[1]]
+  Rain.ests[rain, 2:4] <- coef.all[1, c(1, 5, 6)]
+  
+  # Accident death
+  meta.acci <- summary(Rain.glm.meta(rain, "accident"))
+  coef.acci <- meta.acci[[1]]
+  Rain.ests[rain, 5:7] <- coef.acci[1, c(1, 5, 6)]
+}
+# It takes couple of mins to run. So I save it for convenience.
+saveRDS(Rain.ests, file = "data/Rain.ests.rds")
+# Rain.ests is used to plot.
+```
+
+```{r}
+Rain.ests <- readRDS("data/Rain.ests.rds")
+pdf("Plots/Pooled_estimates_by_rain .pdf", width = 12, height = 5)
+p1 <- ggplot(Rain.ests, aes(rain, all.point)) +
+         geom_pointrange(aes(ymin = all.low, ymax = all.high)) + 
+         scale_y_continuous("Pooled estimates for all-cause death", 
+                            limits = c(-6.6, 6.6)) +
+         scale_x_discrete("Rain Limit", labels = c("75mm", "125mm", "175mm"))
+
+p2 <- ggplot(Rain.ests, aes(rain, acci.point)) +
+         geom_pointrange(aes(ymin = acci.low, ymax = acci.high)) +
+         scale_y_continuous("Pooled estimates for accidental death", 
+                            limits = c(-6.6, 6.6)) +
+         scale_x_discrete("Rain Limit", labels = c("75mm", "125mm", "175mm"))
+
+grid.arrange(p1, p2, ncol = 2)
+dev.off()
+```
