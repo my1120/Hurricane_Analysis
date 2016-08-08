@@ -223,18 +223,17 @@ df_county <- df_pop_county
 df_county$region <- sprintf("%05s", df_county$region)
 ```
 
-Get all the counties in the NMMAPS with storm based on 75 rain, 500 dist
+Get all the counties in the NMMAPS with storm based on 50 rain, 500 dist
 ```{r}
 fips <- unique(county$fips)
 rain_exposure(locations = fips,
               start_year = 1988, end_year = 2005,
-              rain_limit = 75, dist_limit = 500,
-              #days_included = c(-1, 0, 1),
+              rain_limit = 50, dist_limit = 500,
               out_type = "rds",
-              out_dir = "data/county_w_storm_rain75")
-co <- list.files("data/county_w_storm_rain75")
-county_w_storm <- file_path_sans_ext(co)
-# 68 counties
+              out_dir = "data/county_w_storm_rain50")
+co <- list.files("data/county_w_storm_rain50")
+county_w_storm <- tools::file_path_sans_ext(co)
+# 75 counties
 ```
 
 Set value for counties in NMMAPS
@@ -280,12 +279,13 @@ choro$title <- "County in NMMAPS"
 choro$set_zoom(eastern_states)
 
 choro$ggplot_scale <- scale_fill_manual(name = "County status",
-                                    values = c("white",
+                                        values = c("white",
                                                "orange",
                                                "red"),
-                                    labels = c("Not in NMMAPS",
+                                        labels = c("Not in NMMAPS",
                                                "In NMMAPS without Storm",
-                                               "In NMMAPS with Storm"))
+                                               "In NMMAPS with Storm"), 
+                                        guide = guide_legend(reverse = TRUE))
 
 
 choro$render()
@@ -302,15 +302,19 @@ latlong <- subset(city.char, city.char$statename %in% eastern_states)
 latlong$lat <- as.numeric(latlong$lat)
 latlong$long <- -1 * as.numeric(latlong$long)
 
+# get value for colour
+latlong <- left_join(latlong, get.city.county, by = "city")
+
 a <- choro$render()
-a + geom_point(data = latlong, aes(x = long, y = lat, group = NULL),
-               shape = 1) 
-   # scale_shape_discrete(solid = TRUE)
-ggsave("map/county_in_NMMAPS.pdf")
+a + geom_point(data = latlong, aes(x = long, y = lat, group = NULL, 
+                                   colour = factor(value)),
+                                   shape = 1, size = 5, show.legend = FALSE) +
+    scale_colour_manual(values = c("orange", "red")) 
+ggsave("Plots/county_in_NMMAPS.png", width = 12, height = 9)
 ```
 
 
-### Check out the map
+### Check out the map (based on 75mm rain exposure)
 
 * St. Louis city (fips = 29510) in Missouri has no storm during our study period. 
 
