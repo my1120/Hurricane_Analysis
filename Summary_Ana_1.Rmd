@@ -20,6 +20,7 @@ library(ggthemes)
 Run this code if you don't already have `hurricaneexposuredata` installed (also, you'll want to reinstall the newest version of `hurricaneexposure`):
 
 ```{r eval = FALSE}
+library(devtools)
 install_github("geanders/hurricaneexposuredata")
 install_github("geanders/hurricaneexposure")
 ```
@@ -54,7 +55,7 @@ communities <- subset(county, select = c("city",
 colnames(communities)[1] <- "commun"
 ```
 
-### Create data sets based on rain_exposure
+#### Create data sets based on rain_exposure
 ```{r eval=FALSE}
 # 50mm rain, 500km dist, 3-day window
 rain_exposure(locations = communities,
@@ -89,7 +90,7 @@ rain_exposure(locations = communities,
               out_dir = "exposure/rain125")
 ```
 
-### Create data sets based on wind_exposure
+#### Create data sets based on wind_exposure
 ```{r eval=FALSE}
 # wind_limit = 12m/sec
 wind_exposure(locations = communities,
@@ -107,7 +108,7 @@ wind_exposure(locations = communities,
               out_type = "rds", out_dir = "exposure/wind18")
 ```
 
-### Create data sets based on distance_exposure
+#### Create data sets based on distance_exposure
 ```{r eval=FALSE}
 # dist_limit = 50km
 distance_exposure(locations = communities,
@@ -123,12 +124,13 @@ distance_exposure(locations = communities,
                   out_type = "rds", out_dir = "exposure/dist100")
 ```
 
-# Combine and summarise
-## Combine function
+## Combine and summarise
+### Combine function
 rain_exposure function yields data sets by city, I am going to combine these data sets into one with comb.city function. 
 ```{r}
-comb.city <- function(rain_limit = c()){
-  root <- paste("exposure/rain", rain_limit, sep = "")
+# 'thres' can take the value "rain50", "rain75", "rain100", "rain125","wind12", "wind15", "wind18"
+comb.city <- function(thres = c()){
+  root <- paste("exposure/", thres, sep = "")
   city.name <- list.files(root, full.names = TRUE)
   df.total <- data.frame()
   for(name in city.name){
@@ -139,7 +141,7 @@ comb.city <- function(rain_limit = c()){
   }
 ```
 
-## Count No. of cities and storms
+### Count No. of cities and storms
 ```{r}
 count <- function(df = c()){
   cities <- unique(df$loc)
@@ -148,17 +150,16 @@ count <- function(df = c()){
   No.s <- length(storms)
   return(c(No.c, No.s))
 }
+# rain
+df50 <- comb.city("rain50")
+df75 <- comb.city("rain75")
+df100 <- comb.city("rain100")
+df125 <- comb.city("rain125")
 
-df50 <- comb.city(50)
-df75 <- comb.city(75)
-df100 <- comb.city(100)
-df125 <- comb.city(125)
-
-# Save for Model_Ana_1
-saveRDS(df50, file = "data/df50.rds")
-saveRDS(df75, file = "data/df75.rds")
-saveRDS(df100, file = "data/df100.rds")
-saveRDS(df125, file = "data/df125.rds")
+# wind
+df12 <- comb.city("wind12")
+df15 <- comb.city("wind15")
+df18 <- comb.city("wind18")
 
 # Statistics summary
 No.of.cities <- c(count(df50)[1], count(df75)[1], count(df100)[1], count(df125)[1])
@@ -169,12 +170,13 @@ kable(ta)
 ```
 
 ## Plots
+### Plot cumulative rain of each storm by city
 ```{r}
 # get data sets
-plot_rain <- readRDS("data/df50.rds")
+plot_rain <- df50
 
 # add city fullname
-sub.county <- readRDS("data/sub.county.rds")
+# sub.county <- readRDS("data/sub.county.rds")
 city.abbr <- plot_rain$loc
 for(city in city.abbr){
     plot_rain$cityname[plot_rain$loc == city] <-
@@ -211,6 +213,58 @@ ggplot(plot_rain, aes(max_rain, cityname, group = cityname)) +
 [BA: You need to increase you x-limit, because you're chopping off the worst storms in New Orleans and Lake Charles. I've increased it to 300 mm in the plot.]
 
 [BA: We don't need to use color here to show the order of intensity, because we're already showing that with the position. Instead, we could consider using color to show something like region or population. We can think about what might be most meaningful.]
+
+### Plot wind speed of each storm by city
+```{r}
+plot_wind <- df12
+
+# add city fullname
+# sub.county <- readRDS("data/sub.county.rds")
+city.abbr <- plot_wind$loc
+for(city in city.abbr){
+    plot_wind$cityname[plot_wind$loc == city] <-
+      paste(sub.county$citynameU[sub.county$city == city],
+            sub.county$state[sub.county$city == city],
+            sep = ", ")
+  }
+
+# group by maximum of max_wind 
+plot_wind <- dplyr::group_by(plot_wind, loc) %>%
+    dplyr::mutate(loc_max_wind = max(max_wind)) %>%
+    ungroup() %>%
+    arrange(loc_max_wind) %>%
+    mutate(cityname = factor(cityname, levels = unique(cityname)))
+
+# categorize max_rain for plotting
+plot_wind$wind_cate <- cut(plot_wind$max_wind, 
+                           breaks = c(12, 15, 18, Inf),
+                           labels = c(1:3))  
+# plot
+ggplot(plot_wind, aes(max_wind, cityname, group = cityname)) +
+         geom_vline(xintercept = c(12, 15, 18), colour = "grey", linetype = "longdash") +
+         geom_line(aes(y = cityname), colour = "grey45") +
+         geom_point(aes(color = wind_cate), alpha = 0.8, size = 1.8) +
+         ylab("") +
+         xlab("Wind speed(m/sec)") +
+         scale_x_continuous(breaks = c(12, 15, 18, 25, 35, 45, 55),
+                            limits = c(10, 55)) +
+         theme_few() + 
+         theme(legend.position = "none") +
+         ggsave("Plots/wind_expo.png", width = 11, height = 15)
+```
+
+
+## Select the 5 worst storms based on rain/wind exposure metrics
+```{r}
+df50 <- arrange(df50, desc(max_rain))
+head(df50)
+# The five worst storms are Isidore-2002 in New Orleans(no), Allison-1989 in Lake Charles(lkch), Irene-1999 in Miami(miam), Frances-2004 in Jacksonville(jckv), and Isidore-2002 in Mobile(mobi).
+
+df12 <- arrange(df12, desc(max_wind))
+head(df12)
+# The five worst storms are Andrew-1992 in Miami(miam), Katrina-2005 in New Orleans(no), Ivan-2004 and Georges-1998 in Mobile(mobi), and Andrew-1992 in Lafayette(lafy).
+```
+
 
 ## Map
 Prepare data set for mapping
