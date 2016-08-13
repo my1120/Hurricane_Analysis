@@ -39,7 +39,7 @@ readCity <- function(city = c(), collapseAge = TRUE){
 
 ### Read storm data
 ```{r}
-# `rain` can take the values "rain125", "rain100", "rain75", and "rain50"
+# `criterion` can take the values "rain125", "rain100", "rain75", "rain50"
 readStorm <- function(rain = c(), city = c()){
   root <- "exposure/"
   file <- paste(root, rain, "/", city, ".rds", sep = "")
@@ -74,22 +74,59 @@ city.storm <- function(rain = c(), city = c()){
   cityname <- sub.county$citynameU[sub.county$city == city]
   df$cityname <- cityname
   
-  df$time <- scale(as.numeric(df$date), center = TRUE, scale = FALSE)
-  df$dptp <- residuals(lm(df$dptp ~ df$tmpd, na.action = na.exclude))
-  n.years <- length(unique(as.POSIXlt(df$date)$year))
+  #df$time <- scale(as.numeric(df$date), center = TRUE, scale = FALSE)
+  #n.years <- length(unique(as.POSIXlt(df$date)$year))
+  df$year <- as.factor(year(df$date))
+  df$doy <- yday(df$date)
   
   # Total death
   df$all <- df$accident + df$death
   
-  # Create strata
-  df$year <- as.factor(format(df$date, format = "%Y"))
-  df$month <- as.factor(months(df$date))
-  df$strata <- as.factor(df$year:df$month)
   return(df)
 }
 # example
 # miam_df75 <- city.storm(rain = "rain75", city = "miam")
 ```
+
+## Case-crossover
+```{r}
+cross_mod <- function(rain = c(), city = c(), cause = "all", control.ratio = 1){
+  df <- city.storm(rain, city)
+  
+  case_dates <- subset(df, hurr == 1) # hurr is exposure
+  control_dates <- subset(df, hurr = 0)
+  
+  for(i in 1:nrow(case_dates)){
+  control_range <- case_dates$doy[i] + -3:3
+  control_subset <- subset(control_dates, doy %in% control_range)
+  controls <- sample_n(control_subset, control.ratio)
+  stratum <- paste("stratum", i, sep = ".")
+  i_stratum <- rbind(case_dates[i, ], controls)
+  i_stratum$stratum <- stratum
+
+  if(i == 1){
+    new_df <- i_stratum
+  } else {
+    new_df <- rbind(new_df, i_stratum)
+  }
+}
+  new_df$stratum <- factor(new_df$stratum)
+ 
+  mod <- glm(new_df[, cause] ~ hurr + stratum + dow + year, 
+             # Sunday is the reference day, and 1987 (no storm in 1987) is the reference year.
+             # We may need an offset representing city population in the model
+             family = quasipoisson(link = log),
+             data = new_df,
+             control = glm.control(epsilon = 10E-8, maxit = 5000))
+
+  return(mod)
+}
+
+# example
+a <- cross_mod(rain = "rain50", city = "miam", control.ratio = 5)
+```
+
+[MY: In the above chunk, the data used for the model is not a time-series data set. So it seems I can't use crossbasis for glm. I think we may still need to do time-stratified (e.g year:month:dow) if we descide to use a case-crossover design and hope to show the lag curve.]
 
 ## Intercept only meta-regression
 ### First-stage: Single lag distribution of linear hurricant exposure
