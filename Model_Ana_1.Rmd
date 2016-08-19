@@ -94,11 +94,13 @@ cross_mod <- function(rain = c(), city = c(), cause = "all", control.ratio = 1){
   df <- city.storm(rain, city)
   
   case_dates <- subset(df, hurr == 1) # hurr is exposure
-  control_dates <- subset(df, hurr = 0)
+  control_dates <- subset(df, hurr == 0)
   
   for(i in 1:nrow(case_dates)){
   control_range <- case_dates$doy[i] + -3:3
-  control_subset <- subset(control_dates, doy %in% control_range)
+  control_subset <- subset(control_dates, 
+                           control_dates$year != case_dates$year[i] &
+                           doy %in% control_range)
   controls <- sample_n(control_subset, control.ratio)
   stratum <- paste("stratum", i, sep = ".")
   i_stratum <- rbind(case_dates[i, ], controls)
