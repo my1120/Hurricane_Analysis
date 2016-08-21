@@ -90,14 +90,14 @@ city.storm <- function(rain = c(), city = c()){
 
 ## Case-crossover
 ```{r}
-cross_mod <- function(rain = c(), city = c(), cause = "all", control.ratio = 1){
+cross_mod <- function(rain = c(), city = c(), cause = "all", control.ratio = 15){
   df <- city.storm(rain, city)
   
   case_dates <- subset(df, hurr == 1) # hurr is exposure
   control_dates <- subset(df, hurr == 0)
   
   for(i in 1:nrow(case_dates)){
-  control_range <- case_dates$doy[i] + -3:3
+  control_range <- case_dates$doy[i] + c(-3, -2, 2, 3) # exclude three-day window hurr
   control_subset <- subset(control_dates, 
                            control_dates$year != case_dates$year[i] &
                            doy %in% control_range)
@@ -113,19 +113,28 @@ cross_mod <- function(rain = c(), city = c(), cause = "all", control.ratio = 1){
   }
 }
   new_df$stratum <- factor(new_df$stratum)
- 
-  mod <- glm(new_df[, cause] ~ hurr + stratum + dow + year, 
-             # Sunday is the reference day, and 1987 (no storm in 1987) is the reference year.
-             # We may need an offset representing city population in the model
+  # merge with df
+  new_df <- select(new_df, date, stratum)
+  df <- left_join(df, new_df, by = "date")
+  
+  # crossbasis
+  cb <- crossbasis(df$hurr, lag = c(0, 13), 
+                   argvar = list(fun = "lin"),
+                   arglag = list(fun = "ns", knots = c(1, 4, 8)))
+  
+  df$year <- as.numeric(df$year)
+  mod <- glm(df[, cause] ~ cb + stratum + ns(year, 2), 
              family = quasipoisson(link = log),
-             data = new_df,
+             data = df,
              control = glm.control(epsilon = 10E-8, maxit = 5000))
-
-  return(mod)
+  # crosspred
+  pred <- crosspred(basis = cb, model = mod, cen = 0)
+  city_mod <- list(mod = mod, pred = pred)
+  return(city_mod)
 }
 
 # example
-a <- cross_mod(rain = "rain50", city = "miam", control.ratio = 5)
+a <- cross_mod(rain = "rain75", city = "miam")
 ```
 
 [MY: In the above chunk, the data used for the model is not a time-series data set. So it seems I can't use crossbasis for glm. I think we may still need to do time-stratified (e.g year:month:dow) if we descide to use a case-crossover design and hope to show the lag curve.]
