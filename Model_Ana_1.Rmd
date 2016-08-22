@@ -39,10 +39,10 @@ readCity <- function(city = c(), collapseAge = TRUE){
 
 ### Read storm data
 ```{r}
-# `criterion` can take the values "rain125", "rain100", "rain75", "rain50"
-readStorm <- function(rain = c(), city = c()){
+# `criterion` can take the values "rain125", "rain100", "rain75", "rain50", "wind12", "wind15", "wind18"
+readStorm <- function(criterion = c(), city = c()){
   root <- "exposure/"
-  file <- paste(root, rain, "/", city, ".rds", sep = "")
+  file <- paste(root, criterion, "/", city, ".rds", sep = "")
   df <- readRDS(file)
   df <- as.data.frame(df)
   df$date <- lubridate::ymd(df$closest_date)
@@ -55,11 +55,11 @@ readStorm <- function(rain = c(), city = c()){
 
 ### Combine health data and storm data
 ```{r}
-city.storm <- function(rain = c(), city = c()){
+city.storm <- function(criterion = c(), city = c()){
   # Get health data
   h.df <- readCity(city)
   # Get storm data
-  s.df <- readStorm(rain, city)
+  s.df <- readStorm(criterion, city)
   
   storm_days <- s.df$date
   
@@ -76,7 +76,7 @@ city.storm <- function(rain = c(), city = c()){
   
   #df$time <- scale(as.numeric(df$date), center = TRUE, scale = FALSE)
   #n.years <- length(unique(as.POSIXlt(df$date)$year))
-  df$year <- as.factor(year(df$date))
+  df$year <- year(df$date)
   df$doy <- yday(df$date)
   
   # Total death
@@ -90,8 +90,8 @@ city.storm <- function(rain = c(), city = c()){
 
 ## Case-crossover
 ```{r}
-cross_mod <- function(rain = c(), city = c(), cause = "all", control.ratio = 15){
-  df <- city.storm(rain, city)
+cross_mod <- function(criterion = c(), city = c(), cause = "all", control.ratio = 15){
+  df <- city.storm(criterion, city)
   
   case_dates <- subset(df, hurr == 1) # hurr is exposure
   control_dates <- subset(df, hurr == 0)
@@ -122,7 +122,6 @@ cross_mod <- function(rain = c(), city = c(), cause = "all", control.ratio = 15)
                    argvar = list(fun = "lin"),
                    arglag = list(fun = "ns", knots = c(1, 4, 8)))
   
-  df$year <- as.numeric(df$year)
   mod <- glm(df[, cause] ~ cb + stratum + ns(year, 2), 
              family = quasipoisson(link = log),
              data = df,
@@ -134,10 +133,138 @@ cross_mod <- function(rain = c(), city = c(), cause = "all", control.ratio = 15)
 }
 
 # example
-a <- cross_mod(rain = "rain75", city = "miam")
+# a <- cross_mod(rain = "rain75", city = "miam")
 ```
 
 [MY: In the above chunk, the data used for the model is not a time-series data set. So it seems I can't use crossbasis for glm. I think we may still need to do time-stratified (e.g year:month:dow) if we descide to use a case-crossover design and hope to show the lag curve.]
+
+### Use case-crossover model for top 5 worst storms
+```{r}
+five_worst <- function(criterion = c(), city = c(), cause = "all", control.ratio = 15, storm.id = c()){
+  df <- city.storm(criterion, city)
+  
+  case_dates <- subset(df, hurr == 1) # hurr is exposure
+  control_dates <- subset(df, hurr == 0)
+  
+  for(i in 1:nrow(case_dates)){
+  control_range <- case_dates$doy[i] + c(-3, -2, 2, 3) # exclude three-day window hurr
+  control_subset <- subset(control_dates, 
+                           control_dates$year != case_dates$year[i] &
+                           doy %in% control_range)
+  controls <- sample_n(control_subset, control.ratio)
+  stratum <- paste("stratum", i, sep = ".")
+  i_stratum <- rbind(case_dates[i, ], controls)
+  i_stratum$stratum <- stratum
+
+  if(i == 1){
+    new_df <- i_stratum
+  } else {
+    new_df <- rbind(new_df, i_stratum)
+  }
+}
+  # choose matching storm_id
+  d <- subset(new_df, storm_id == storm.id)
+  to_mod <- subset(new_df, stratum == d$stratum)
+  
+  mod <- glm(to_mod[, cause] ~ hurr, 
+             family = quasipoisson(link = log),
+             data = to_mod,
+             control = glm.control(epsilon = 10E-8, maxit = 5000))
+  
+  return(mod)
+}
+```
+
+[MY: For each storm, only the storm day and 15 matched non-storm days were included in the analysis]
+
+The five worst storms are Isidore-2002 in New Orleans(no), Allison-1989 in Lake Charles(lkch), Irene-1999 in Miami(miam), Frances-2004 in Jacksonville(jckv), and Isidore-2002 in Mobile(mobi).
+
+```{r}
+get.coef <- function(model = c()){
+  coef <- coef(summary(model))
+  coef_line <- coef[2, ]
+  log_rr <- coef_line[1] + c(0, -1, 1)*1.96*coef_line[2]
+  rr <- exp(log_rr)
+  return(rr)
+}
+
+five_rain <- list(city = c("no", "lkch", "miam", "jckv", "mobi"),
+                  cityname = c("New Orleans", "Lake Charles", "Miami", "Jacksonville", "Mobile"),
+                  storm.id = c("Isidore-2002", "Allison-1989", "Irene-1999", "Frances-2004", "Isidore-2002"))
+
+plot_five_rain <- as.data.frame(matrix(NA, 5, 7))
+colnames(plot_five_rain) <- c("city_storm", paste0("all", ".", c("rr", "low", "high"), sep = ""),
+                                            paste0("acci", ".", c("rr", "low", "high"), sep = ""))
+plot_five_rain$city_storm <- paste0(five_rain$cityname, "_", five_rain$storm.id, sep = "")
+
+for(i in 1:5){
+  # All death
+  mod.all <- five_worst(criterion = "rain50", city = five_rain$city[i], storm.id = five_rain$storm.id[i])
+  coef.all <- get.coef(mod.all)
+  plot_five_rain[i, 2:4] <- coef.all
+  
+  # Accident death
+  mod.acci <- five_worst(criterion = "rain50", city = five_rain$city[i], storm.id = five_rain$storm.id[i])
+  coef.acci <- get.coef(mod.acci)
+  plot_five_rain[i, 5:7] <- coef.acci
+}
+
+pdf("Plots/Effects_five_worst_storms_by_rain .pdf", width = 12, height = 5)
+p1 <- ggplot(plot_five_rain, aes(city_storm, all.rr)) +
+         geom_pointrange(aes(ymin = all.low, ymax = all.high), size = 0.2) + 
+         coord_flip() +
+         scale_y_continuous("Relative risk of all death by rain") +
+         xlab("")
+
+p2 <- ggplot(plot_five_rain, aes(city_storm, acci.rr)) +
+         geom_pointrange(aes(ymin = acci.low, ymax = acci.high), size = 0.2) +
+         coord_flip() +
+         scale_y_continuous("Relative risk of accident death by rain") +
+         xlab("")
+grid.arrange(p1, p2, ncol = 2)
+dev.off()
+```
+
+The five worst storms are Andrew-1992 in Miami(miam), Katrina-2005 in New Orleans(no), Ivan-2004 and Georges-1998 in Mobile(mobi), and Andrew-1992 in Lafayette(lafy).
+```{r}
+five_wind <- list(city = c("miam", "no", "mobi", "mobi", "lafy"),
+                  cityname = c("Miami", "New Orleans", "Mobile", "Mobile", "Lafayette"),
+                  storm.id = c("Andrew-1992", "Katrina-2005", "Ivan-2004", "Georges-1998", "Andrew-1992"))
+
+plot_five_wind <- as.data.frame(matrix(NA, 5, 7))
+colnames(plot_five_wind) <- c("city_storm", paste0("all", ".", c("rr", "low", "high"), sep = ""),
+                                            paste0("acci", ".", c("rr", "low", "high"), sep = ""))
+plot_five_wind$city_storm <- paste0(five_wind$cityname, "_", five_wind$storm.id, sep = "")
+
+for(i in 1:5){
+  # All death
+  mod.all <- five_worst(criterion = "wind12", city = five_wind$city[i], storm.id = five_wind$storm.id[i])
+  coef.all <- get.coef(mod.all)
+  plot_five_wind[i, 2:4] <- coef.all
+  
+  # Accident death
+  mod.acci <- five_worst(criterion = "wind12", city = five_wind$city[i], storm.id = five_wind$storm.id[i])
+  coef.acci <- get.coef(mod.acci)
+  plot_five_wind[i, 5:7] <- coef.acci
+}
+
+# Andrew-1992 in Lafayette had very large standard error. 
+
+pdf("Plots/Effects_five_worst_storms_by_wind .pdf", width = 12, height = 5)
+p1 <- ggplot(plot_five_wind, aes(city_storm, all.rr)) +
+         geom_pointrange(aes(ymin = all.low, ymax = all.high), size = 0.2) + 
+         coord_flip() +
+         scale_y_continuous("Relative risk of all death by wind") +
+         xlab("")
+
+p2 <- ggplot(plot_five_wind, aes(city_storm, acci.rr)) +
+         geom_pointrange(aes(ymin = acci.low, ymax = acci.high), size = 0.2) +
+         coord_flip() +
+         scale_y_continuous("Relative risk of accident death by wind") +
+         xlab("")
+grid.arrange(p1, p2, ncol = 2)
+dev.off()
+```
 
 ## Intercept only meta-regression
 ### First-stage: Single lag distribution of linear hurricant exposure
