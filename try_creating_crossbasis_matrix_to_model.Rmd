@@ -1,0 +1,172 @@
+---
+title: "try creating crossbasis matrix to model"
+author: "Meilin Yan"
+date: "September 22, 2016"
+output: word_document
+---
+
+```{r include=FALSE}
+library(lubridate)
+library(dplyr)
+library(dlnm)
+library(splines)
+
+readCity <- function(city = c(), collapseAge = TRUE){
+  root <- "~/tmp/NMMAPS/"
+  file <- paste(root, city, ".rds", sep = "")
+  df <- readRDS(file)
+
+  if(collapseAge == TRUE){
+    df <- rowsum(df[,c("alldeath", "death", "accident", "cvd", "resp",
+                       "copd", "suicide", "tmpd", "dptp")], df$date,
+                 reorder = FALSE)
+    df$date <- as.Date(rownames(df))
+    df[ , c("tmpd", "dptp")] <- df[ , c("tmpd", "dptp")]/3
+    df$dow <- as.factor(as.POSIXlt(df$date)$wday)
+  }
+  
+  return(df)
+}
+
+readStorm <- function(criterion = c(), city = c()){
+  root <- "exposure/"
+  file <- paste(root, criterion, "/", city, ".rds", sep = "")
+  df <- readRDS(file)
+  df <- as.data.frame(df)
+  df$date <- lubridate::ymd(df$closest_date)
+  
+  return(df)
+}
+
+city.storm <- function(criterion = c(), city = c()){
+  # Get health data
+  h.df <- readCity(city)
+  # Get storm data
+  s.df <- readStorm(criterion, city)
+  
+  storm_days <- s.df$date
+  
+  df <- left_join(h.df, s.df, by = "date") %>%
+        mutate(hurr = ifelse(date %in% storm_days, 1, 0))
+  df$hurr <- as.factor(df$hurr)
+  
+  # Add abbreviate and full cityname
+  df$city <- city
+  sub.county <- readRDS("data/sub.county.rds")
+     
+  cityname <- sub.county$citynameU[sub.county$city == city]
+  df$cityname <- cityname
+  
+  #df$time <- scale(as.numeric(df$date), center = TRUE, scale = FALSE)
+  #n.years <- length(unique(as.POSIXlt(df$date)$year))
+  df$year <- year(df$date)
+  df$doy <- yday(df$date)
+  
+  # Total death
+  df$all <- df$accident + df$death
+  
+  return(df)
+}
+```
+
+If I did the following steps,
+
+\
+1.Obtain matrix from **crossbasis** function by using the orignal data;
+\
+2.Generate a new data set with "controls days" for each storm;
+\
+3.Extract **matrix used for model** by matching the matrix in **1** to the new data set in **2**.
+
+
+\
+Then I came across a problem, the **crosspred** function didn't work with **matrix used for model** and the new data set.
+\
+(error "arguments 'basis' and 'model' not consistent. See help(crosspred)"). 
+
+\
+Because the **matrix used for model** from **3** is just **matrix**, not **crossbasis** class. The **crosspred** function also needs the attributes of **crossbasis** class for calculation. So I revised the steps as,
+\
+1.Generate a new data set with "control days" for each storm;
+\
+2.Obtain **matrix (also the matrix used for model)** from **crossbasis** function by using the new data set.
+
+
+#### City with 4 storms
+
+```{r warning=FALSE, message=FALSE, cache=TRUE}
+df <- city.storm(criterion = "rain125", city = "miam") # 4 storms: 2877, 3157, 4671, 5026 (row number)
+```
+
+
+```{r}
+## Find 14 lag days for each storm (1-14 days following storm day)
+## Generate control days for each storm
+df$time <- 1:length(df$hurr)
+cand_control <- unique(c(which(df$hurr == 1) , which(df$hurr == 1) + 1,
+                         which(df$hurr == 1) - 1))
+df$cand_control <- TRUE
+df$cand_control[cand_control] <- FALSE
+
+case_dates <- subset(df, hurr == 1) # hurr is exposure
+control_dates <- subset(df, hurr == 0)
+control.ratio <- 15
+
+for(i in 1:nrow(case_dates)){
+  ## lag days
+  lag_dates <- case_dates[i, ]$date + 1:14
+  lags <- subset(df, date %in% lag_dates)
+  ## controls
+  control_range <- case_dates[i, ]$doy + -3:3 
+  control_subset <- subset(control_dates, 
+                           control_dates$year != case_dates[i, ]$year &
+                           doy %in% control_range & 
+                           cand_control) 
+  controls <- sample_n(control_subset, control.ratio)
+  stratum <- paste("stratum", i, sep = ".")
+  ## mark case-day, lag-day, control-day
+  status <- c("case", paste0("lag", 1:14), rep("control", control.ratio))
+  
+  i_stratum <- rbind(case_dates[i, ], lags, controls)
+  i_stratum$stratum <- stratum
+  i_stratum$status <- status
+  
+  if(i == 1){
+    new_df <- i_stratum
+  }else{
+     new_df <- rbind(new_df, i_stratum)
+     }
+  }
+
+nrow(new_df) # 120
+length(unique(new_df$date)) # should be less than or equal to 120 for possible duplicated controls
+
+# Take a look of the new data set 
+# Just show a few variable in order to show the core information
+new_df[, c("hurr", "time", "date", "cand_control", "stratum", "status")]
+
+# Modify the new data set for crossbasis
+## rbind a "fake" data frame with 14 rows and same number of columns as "new_df" to "new_df"
+## Because "crossbasis" will set the first 14 rows as NA since we have lag = 14
+
+coln <- ncol(new_df)
+be_data <- as.data.frame(matrix(0, nrow = 14, ncol = coln))
+colnames(be_data) <- colnames(new_df)
+df_to_mod <- rbind(be_data, new_df)
+
+df_to_mod[, c("hurr", "time", "date", "cand_control", "stratum", "status")]
+
+# crossbasis
+cb <- crossbasis(df_to_mod$hurr, lag = c(0, 14), 
+                 argvar = list(fun = "lin"),
+                 arglag = list(fun = "ns", knots = c(1, 4, 8)))
+cb
+
+
+mod <- glm(all ~ cb + ns(year, 2) + stratum, 
+            family = quasipoisson(link = log), data = df_to_mod,
+            control = glm.control(epsilon = 10E-8, maxit = 5000))
+
+pred <- crosspred(cb, mod, at = 1)
+plot(pred, "slices", var = 1, ylab = "RR")
+```
