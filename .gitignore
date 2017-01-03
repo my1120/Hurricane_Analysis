@@ -8,5 +8,4 @@ map/*
 exposure/*
 data/*
 *.html
-*.Backup.Rmd
-\ExampleCodeAug26.R
+*.ExampleCodeAug26.R
