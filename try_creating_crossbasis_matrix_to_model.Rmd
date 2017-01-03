@@ -1,7 +1,7 @@
 ---
 title: "try creating crossbasis matrix to model"
 author: "Meilin Yan"
-date: "September 22, 2016"
+date: "December 24, 2016"
 output: word_document
 ---
 
@@ -99,7 +99,7 @@ df <- city.storm(criterion = "rain125", city = "miam") # 4 storms: 2877, 3157, 4
 ```
 
 
-```{r}
+```{r warning=FALSE, message=FALSE, fig.width=6, fig.height=4}
 ## Find 14 lag days for each storm (1-14 days following storm day)
 ## Generate control days for each storm
 df$time <- 1:length(df$hurr)
@@ -110,26 +110,45 @@ df$cand_control[cand_control] <- FALSE
 
 case_dates <- subset(df, hurr == 1) # hurr is exposure
 control_dates <- subset(df, hurr == 0)
-control.ratio <- 15
+
+control_ratio <- 15
+lags <- 14
 
 for(i in 1:nrow(case_dates)){
-  ## lag days
-  lag_dates <- case_dates[i, ]$date + 1:14
-  lags <- subset(df, date %in% lag_dates)
-  ## controls
+  ## choose lags of storm days (lag0)
+  lag_dates <- case_dates[i, ]$date + 1:lags
+  lag_case <- subset(df, date %in% lag_dates)
+  
+  ## choose controls for storm days (lag0)
   control_range <- case_dates[i, ]$doy + -3:3 
   control_subset <- subset(control_dates, 
                            control_dates$year != case_dates[i, ]$year &
                            doy %in% control_range & 
                            cand_control) 
-  controls <- sample_n(control_subset, control.ratio)
-  stratum <- paste("stratum", i, sep = ".")
-  ## mark case-day, lag-day, control-day
-  status <- c("case", paste0("lag", 1:14), rep("control", control.ratio))
+  controls <- sample_n(control_subset, control_ratio)
   
-  i_stratum <- rbind(case_dates[i, ], lags, controls)
+  ## lagged controls
+  for(j in 1:lags){
+    lag_control_dates <- controls$date + j
+    lag_control_each <- subset(df, date %in% lag_control_dates)
+    
+    if(j == 1){
+      lag_control <- lag_control_each
+    }else{
+      lag_control <- rbind(lag_control, lag_control_each)
+    }
+  }
+  
+  i_stratum <- rbind(case_dates[i, ], lag_case, controls, lag_control)
+  
+  stratum <- paste("stratum", i, sep = ".")
   i_stratum$stratum <- stratum
+  
+  status <- c(rep("case", lags + 1), rep("control", control_ratio*(lags + 1))) # case: 1 storm day + 14 lagged day
   i_stratum$status <- status
+  
+  lag <- c(0:lags, rep(0:lags, each = control_ratio))
+  i_stratum$lag <- lag
   
   if(i == 1){
     new_df <- i_stratum
@@ -138,30 +157,31 @@ for(i in 1:nrow(case_dates)){
      }
   }
 
-nrow(new_df) # 120
-length(unique(new_df$date)) # should be less than or equal to 120 for possible duplicated controls
+# new_df <- new_df %>% arrange(stratum, lag)
+
+nrow(new_df) # 960
+length(unique(new_df$date)) # could be less than or equal to 960 for possible duplicated controls
 
 # Take a look of the new data set 
 # Just show a few variable in order to show the core information
-new_df[, c("hurr", "time", "date", "cand_control", "stratum", "status")]
+head(new_df[, c("hurr", "time", "date", "cand_control", "stratum", "status", "lag")], 280)
 
 # Modify the new data set for crossbasis
-## rbind a "fake" data frame with 14 rows and same number of columns as "new_df" to "new_df"
-## Because "crossbasis" will set the first 14 rows as NA since we have lag = 14
+## rbind a "fake" data frame with 14 rows (lag = 14) and same number of columns to "new_df"
+## Because "crossbasis" will set the first 14 rows as NA
 
 coln <- ncol(new_df)
-be_data <- as.data.frame(matrix(0, nrow = 14, ncol = coln))
+be_data <- as.data.frame(matrix(0, nrow = lags, ncol = coln))
 colnames(be_data) <- colnames(new_df)
 df_to_mod <- rbind(be_data, new_df)
 
-df_to_mod[, c("hurr", "time", "date", "cand_control", "stratum", "status")]
+head(df_to_mod[, c("hurr", "time", "date", "cand_control", "stratum", "status", "lag")], 50)
 
 # crossbasis
-cb <- crossbasis(df_to_mod$hurr, lag = c(0, 14), 
+cb <- crossbasis(df_to_mod$hurr, lag = c(0, lags), 
                  argvar = list(fun = "lin"),
                  arglag = list(fun = "ns", knots = c(1, 4, 8)))
-cb
-
+head(cb, 280)
 
 mod <- glm(all ~ cb + ns(year, 2) + stratum, 
             family = quasipoisson(link = log), data = df_to_mod,
