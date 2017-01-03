@@ -8,4 +8,6 @@ map/*
 exposure/*
 data/*
 *.html
-*.ExampleCodeAug26.R
+/*_cache/
+ExampleCodeAug26.R
+Backup.R
