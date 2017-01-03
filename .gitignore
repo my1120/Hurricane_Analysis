@@ -7,3 +7,6 @@ Plots/*
 map/*
 exposure/*
 data/*
+*.html
+*.Backup.Rmd
+\ExampleCodeAug26.R
