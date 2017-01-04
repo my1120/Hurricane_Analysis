@@ -1,0 +1,97 @@
+---
+title: "Worst Storms"
+output: html_notebook
+---
+
+```{r include=FALSE}
+library(lubridate)
+library(dplyr)
+library(dlnm)
+library(splines)
+
+source('~/Documents/PhD Research/Hurricane/Hurricane_analysis/R/readCity.R')
+source('~/Documents/PhD Research/Hurricane/Hurricane_analysis/R/readStorm.R')
+source('~/Documents/PhD Research/Hurricane/Hurricane_analysis/R/CityStorm.R')
+source('~/Documents/PhD Research/Hurricane/Hurricane_analysis/R/CrossoverData.R')
+```
+
+Based on exposure criterion of "rain", the five worst storms are  
+
+* Isidore-2002 in New Orleans (no)
+* Allison-1989 in Lake Charles (lkch)   
+* Irene-1999 in Miami (miam)
+* Frances-2004 in Jacksonville (jckv) 
+* Isidore-2002 in Mobile (mobi)
+
+Based on exposure criterion of "wind", the five worst storms are
+
+* Andrew-1992 in Miami(miam)
+* Katrina-2005 in New Orleans(no)
+* Ivan-2004 and Georges-1998 in Mobile(mobi)
+* Andrew-1992 in Lafayette(lafy)
+
+```{r}
+### criterion = rain
+cities <- c("no", "lkch", "miam", "jckv", "mobi")
+cityname <- c("New Orleans", "Lake Charles", "Miami", "Jacksonville", "Mobile")
+stormID <- c("Isidore-2002", "Allison-1989", "Irene-1999", "Frances-2004", "Isidore-2002")
+
+### criterion = wind
+cities <- c("miam", "no", "mobi", "mobi", "lafy")
+cityname <- c("Miami", "New Orleans", "Mobile", "Mobile", "Lafayette")
+stormID <- c("Andrew-1992", "Katrina-2005", "Ivan-2004", "Georges-1998", "Andrew-1992")
+
+allstorm <- lapply(cities, function(x) CrossoverData(criterion = "wind18", city = x))
+onestorm <- mapply(CrossoverData, criterion = "wind18", city = cities, storm_id = stormID, 
+                   SIMPLIFY = FALSE)
+
+basisFun <- function(data = c(), cause = "all", storm_id = NA){
+  cb <- crossbasis(data$hurr, lag = c(0, 14),
+                   argvar = list(fun = "lin"),
+                   arglag = list(fun = "ns", knots = c(1, 4,8)))
+  
+  if(!is.na(storm_id)){
+    fit <- glm(data[, cause] ~ cb + ns(year, 2), 
+            family = quasipoisson(link = log), 
+            data = data,
+            control = glm.control(epsilon = 10E-8, maxit = 5000))
+    pred <- crosspred(cb, fit, at = 1)
+  }else{
+    fit <- glm(data[, cause] ~ cb + ns(year, 2) + stratum, 
+            family = quasipoisson(link = log), 
+            data = data,
+            control = glm.control(epsilon = 10E-8, maxit = 5000))
+    pred <- crosspred(cb, fit, at = 1)
+  }
+  return(pred)
+}
+
+plot_allstorm <- function(pred = c(), cityname = c(), cause = "all"){
+  plot(pred, "slices", var = 1, xlab = "Lag", ylab = paste0("RR of ", cause, " death"), 
+       main = paste0(cityname, " ", "Wind 18"))
+}
+
+plot_onestorm <- function(pred = c(), cityname = c(), cause = "all", storm_id = c()){
+  plot(pred, "slices", var = 1, xlab = "Lag", ylab = paste0("RR of ", cause, " death"), 
+       main = paste0(cityname, " ", storm_id))
+}
+
+#png("All vs. worst storm.png", res = 300)
+pdf("Plots/All and worst storms_wind18.pdf", width = 7, height = 13)
+par(mfrow = c(5, 2))
+
+for(i in 1:length(cities)){
+  name <- cityname[i]
+  id <- stormID[i]
+  
+  df1 <- allstorm[[i]]
+  pred1 <- basisFun(data = df1)
+  plot_allstorm(pred = pred1, cityname = name)
+  
+  df2 <- onestorm[[i]]
+  pred2 <- basisFun(data = df2, storm_id = id)
+  plot_onestorm(pred = pred2, cityname = name, storm_id = id)
+}
+dev.off()
+```
+

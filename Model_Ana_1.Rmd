@@ -5,138 +5,19 @@ date: "June 7, 2016"
 output: pdf_document
 ---
 
-## LOAD PACKAGES
+## LOAD PACKAGES and functions
 ```{r message=FALSE, warning=FALSE}
 library(lubridate)
 library(dplyr)
 library(dlnm)
 library(splines)
 library(mvmeta)
+
+source('~/Documents/PhD Research/Hurricane/Hurricane_analysis/R/readCity.R')
+source('~/Documents/PhD Research/Hurricane/Hurricane_analysis/R/readStorm.R')
+source('~/Documents/PhD Research/Hurricane/Hurricane_analysis/R/citystorm.R')
 ```
 
-## DATA PREP
-### Read health data
-```{r}
-readCity <- function(city = c(), collapseAge = TRUE){
-  root <- "~/tmp/NMMAPS/"
-  file <- paste(root, city, ".rds", sep = "")
-  df <- readRDS(file)
-
-  if(collapseAge == TRUE){
-    df <- rowsum(df[,c("alldeath", "death", "accident", "cvd", "resp",
-                       "copd", "suicide", "tmpd", "dptp")], df$date,
-                 reorder = FALSE)
-    df$date <- as.Date(rownames(df))
-    df[ , c("tmpd", "dptp")] <- df[ , c("tmpd", "dptp")]/3
-    df$dow <- as.factor(as.POSIXlt(df$date)$wday)
-  }
-  
-  return(df)
-}
-# example
-# miam <- readCity(city = "miam", collapseAge = TRUE)
-```
-
-### Read storm data
-```{r}
-# `criterion` can take the values "rain125", "rain100", "rain75", "rain50", "wind12", "wind15", "wind18"
-readStorm <- function(criterion = c(), city = c()){
-  root <- "exposure/"
-  file <- paste(root, criterion, "/", city, ".rds", sep = "")
-  df <- readRDS(file)
-  df <- as.data.frame(df)
-  df$date <- lubridate::ymd(df$closest_date)
-  
-  return(df)
-}
-# example
-# miam_75 <- readStorm(rain = "rain75", city = "miam")
-```
-
-### Combine health data and storm data
-```{r}
-city.storm <- function(criterion = c(), city = c()){
-  # Get health data
-  h.df <- readCity(city)
-  # Get storm data
-  s.df <- readStorm(criterion, city)
-  
-  storm_days <- s.df$date
-  
-  df <- left_join(h.df, s.df, by = "date") %>%
-        mutate(hurr = ifelse(date %in% storm_days, 1, 0))
-  df$hurr <- as.factor(df$hurr)
-  
-  # Add abbreviate and full cityname
-  df$city <- city
-  sub.county <- readRDS("data/sub.county.rds")
-     
-  cityname <- sub.county$citynameU[sub.county$city == city]
-  df$cityname <- cityname
-  
-  #df$time <- scale(as.numeric(df$date), center = TRUE, scale = FALSE)
-  #n.years <- length(unique(as.POSIXlt(df$date)$year))
-  df$year <- year(df$date)
-  df$doy <- yday(df$date)
-  
-  # Total death
-  df$all <- df$accident + df$death
-  
-  return(df)
-}
-# example
-# miam_df75 <- city.storm(rain = "rain75", city = "miam")
-```
-
-## Case-crossover
-```{r}
-cross_mod <- function(criterion = c(), city = c(), cause = "all", control.ratio = 15){
-  df <- city.storm(criterion, city)
-  
-  case_dates <- subset(df, hurr == 1) # hurr is exposure
-  control_dates <- subset(df, hurr == 0)
-  
-  for(i in 1:nrow(case_dates)){
-  control_range <- case_dates$doy[i] + c(-3, -2, 2, 3) # exclude three-day window hurr
-  control_subset <- subset(control_dates, 
-                           control_dates$year != case_dates$year[i] &
-                           doy %in% control_range)
-  controls <- sample_n(control_subset, control.ratio)
-  stratum <- paste("stratum", i, sep = ".")
-  i_stratum <- rbind(case_dates[i, ], controls)
-  i_stratum$stratum <- stratum
-
-  if(i == 1){
-    new_df <- i_stratum
-  } else {
-    new_df <- rbind(new_df, i_stratum)
-  }
-}
-  new_df$stratum <- factor(new_df$stratum)
-  # merge with df
-  new_df <- select(new_df, date, stratum)
-  df <- left_join(df, new_df, by = "date")
-  
-  # crossbasis
-  cb <- crossbasis(df$hurr, lag = c(0, 13), 
-                   argvar = list(fun = "lin"),
-                   arglag = list(fun = "ns", knots = c(1, 4, 8)))
-  
-  mod <- glm(df[, cause] ~ cb + stratum + ns(year, 2), 
-             family = quasipoisson(link = log),
-             data = df,
-             control = glm.control(epsilon = 10E-8, maxit = 5000))
-  # crosspred
-  pred <- crosspred(basis = cb, model = mod, cen = 0)
-  city_mod <- list(mod = mod, pred = pred)
-  return(city_mod)
-}
-
-# example
-# a <- cross_mod(rain = "rain75", city = "miam")
-```
-
-[MY: In the above chunk, the data used for the model is not a time-series data set. So it seems I can't use crossbasis for glm. I think we may still need to do time-stratified (e.g year:month:dow) if we descide to use a case-crossover design and hope to show the lag curve.]
 
 ### Use case-crossover model for top 5 worst storms
 ```{r}
@@ -270,11 +151,12 @@ dev.off()
 ### First-stage: Single lag distribution of linear hurricant exposure
 
 ```{r}
-model_city <- function(rain = "rain75", city, cause = "all"){
-  df <- city.storm(rain, city)
+model_city <- function(criterion = "rain75", city, cause = "all"){
+  df <- city.storm(criterion, city)
   cb <- crossbasis(df$hurr, lag = c(0, 13), 
                      argvar = list(fun = "lin"),
-                     arglag = list(fun = "ns", knots = c(1, 4, 8)))
+                     arglag = list(fun = "ns"),
+                                   knots = c(1, 4, 8))
   mod_results <- glm(df[ , cause] ~ cb + ns(time, 7 * 19) + factor(dow), 
              family = quasipoisson(link = log),
              data = df,
@@ -303,7 +185,7 @@ plot_city_mod <- function(city_mod, city_name){
 
 ```{r echo = FALSE, fig.width = 12, fig.height = 10}
 this_plot <- function(city, city_name, cause = "all"){
-  city_mod <- model_city(rain = "rain75", city = city, cause = cause)
+  city_mod <- model_city(criterion = "rain75", city = city, cause = cause)
   plot_city_mod(city_mod, city_name)
 }
 
