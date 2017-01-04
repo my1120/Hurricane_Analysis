@@ -1,10 +1,18 @@
-CrossoverData <- function(criterion = c(), city = c(), cause = "all", control_ratio = 15, lags = 14){
+CrossoverData <- function(criterion = c(), city = c(), cause = "all", control_ratio = 15, 
+                          lags = 14, storm_id = NA){
   
   require(lubridate)
   require(dplyr)
   
   ## generate the data
-  df <- city.storm(criterion, city)
+  df <- CityStorm(criterion, city)
+  
+  if(!is.na(storm_id)){
+    ## exclude other storms
+    df$hurr[df$storm_id != storm_id] <- 0
+  }else{
+      df <- df
+    }
   
   df$time <- 1:length(df$hurr)
   cand_control <- unique(c(which(df$hurr == 1) , which(df$hurr == 1) + 1,
@@ -25,8 +33,8 @@ CrossoverData <- function(criterion = c(), city = c(), cause = "all", control_ra
     control_range <- case_dates[i, ]$doy + -3:3 
     control_subset <- subset(control_dates, 
                              control_dates$year != case_dates[i, ]$year &
-                             doy %in% control_range & 
-                             cand_control) 
+                               doy %in% control_range & 
+                               cand_control) 
     controls <- sample_n(control_subset, control_ratio)
     
     ## lagged controls
@@ -68,4 +76,4 @@ CrossoverData <- function(criterion = c(), city = c(), cause = "all", control_ra
 }
 
 # example
-# a <- CrossoverData(criterion = "rain75", city = "miam")
+# a <- CrossoverDataSpecific(criterion = "rain75", city = "miam", storm_id = "Irene-1999")

@@ -1,5 +1,5 @@
 # `criterion` can take the values "rain125", "rain100", "rain75", "rain50", "wind12", "wind15", "wind18"
-ReadStorm <- function(criterion = c(), city = c()){
+readStorm <- function(criterion = c(), city = c()){
   root <- "exposure/"
   file <- paste(root, criterion, "/", city, ".rds", sep = "")
   df <- readRDS(file)
