@@ -69,11 +69,11 @@ CrossoverData <- function(criterion = c(), city = c(), cause = "all", control_ra
   
   ## rbind a "fake" data frame with lags = 14 rows and same number of columns as "new_df"
   coln <- ncol(new_df)
-  be_data <- as.data.frame(matrix(0, nrow = lags, ncol = coln)) 
+  be_data <- as.data.frame(matrix(NA, nrow = lags, ncol = coln)) 
   colnames(be_data) <- colnames(new_df)
   
   df_to_mod <- rbind(be_data, new_df)
 }
 
 # example
-# a <- CrossoverDataSpecific(criterion = "rain75", city = "miam", storm_id = "Irene-1999")
+# a <- CrossoverData(criterion = "rain75", city = "miam", storm_id = "Irene-1999")

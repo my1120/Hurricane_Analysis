@@ -28,4 +28,4 @@ CityStorm <- function(criterion = c(), city = c()){
   return(df)
 }
 # example
-# miam_df75 <- CityStorm(rain = "rain75", city = "miam")
+# miam_df75 <- CityStorm(criterion = "rain75", city = "miam")
